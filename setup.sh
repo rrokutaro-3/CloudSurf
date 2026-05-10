@@ -64,6 +64,7 @@ echo "CHROME_BIN=$CHROME_BIN" > /tmp/cloudsurf_chrome.env
 
 echo -e "${YELLOW}[4/6] Installing Python deps...${NC}"
 pip3 install flask flask-cors watchdog --quiet
+pip3 install "pymongo[srv]" --quiet --break-system-packages
 
 echo -e "${YELLOW}[5/6] Checking NoVNC...${NC}"
 # Find novnc path — Ubuntu Noble puts it in different places
