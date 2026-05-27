@@ -2,9 +2,11 @@
  * colab_run_all.js
  *
  * 1. Connects to a running Chrome instance via CDP
- * 2. Finds and clicks a specific notebook by name (CLOUDSURF_NOTEBOOK)
- * 3. Handles any "leave page" browser dialog
- * 4. Clicks "Run all" using findDeep (Shadow DOM aware)
+ * 2. Dismisses any Colab popups/warnings (storage, session, etc.)
+ * 3. Finds and clicks a specific notebook by name (CLOUDSURF_NOTEBOOK)
+ * 4. Handles any "leave page" browser dialog
+ * 5. Clicks "Run all" using findDeep (Shadow DOM aware)
+ * 6. Stays alive polling for popups until the notebook finishes running
  *
  * Env vars:
  *   CLOUDSURF_CDP_PORT     CDP port (injected by CloudSurf)
@@ -116,7 +118,83 @@ new Promise((resolve) => {
 });
 `;
 
-// ── Step 2: Run all ───────────────────────────────────────────────────────────
+// ── Popup dismisser ───────────────────────────────────────────────────────────
+// Dismisses all known Colab popups/warnings. Returns list of what was dismissed.
+// Covers: storage warnings, session recovery, runtime crash dialogs, cookie
+// consent, "you are close to the usage limit", "runtime disconnected" toasts.
+const scriptDismissPopups = `
+(function() {
+  const dismissed = [];
+
+  // Only click buttons that unambiguously mean "go away" — nothing else.
+  const DISMISS_TEXTS = [
+    'dismiss',
+    'ignore',
+  ];
+
+  // Aria-labels / text patterns that indicate a dismissable popup
+  const POPUP_SELECTORS = [
+    // Material dialogs
+    'paper-dialog', 'colab-dialog', '.modal', '.dialog',
+    // Colab-specific warning toasts
+    'colab-toast', '#colab-toast-container',
+    // Generic overlays
+    '[role="dialog"]', '[role="alertdialog"]',
+  ];
+
+  function tryClickButton(root) {
+    const all = root.querySelectorAll ? root.querySelectorAll('button, paper-button, [role="button"]') : [];
+    for (const btn of all) {
+      const txt = (btn.textContent || btn.getAttribute('aria-label') || '').trim().toLowerCase();
+      if (DISMISS_TEXTS.some(t => txt === t || txt.startsWith(t))) {
+        btn.click();
+        dismissed.push(txt);
+        return true;
+      }
+    }
+    // Also check shadow roots
+    const children = root.children || [];
+    for (const child of children) {
+      if (child.shadowRoot && tryClickButton(child.shadowRoot)) return true;
+    }
+    return false;
+  }
+
+  // Check each known popup container
+  for (const sel of POPUP_SELECTORS) {
+    const els = document.querySelectorAll(sel);
+    for (const el of els) {
+      // Only target visible elements
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+      tryClickButton(el);
+    }
+  }
+
+  // Also scan the full document for any visible dialog-like element we missed
+  tryClickButton(document.body);
+
+  return dismissed.length > 0 ? ('dismissed: ' + dismissed.join(', ')) : 'none';
+})();
+`;
+
+// ── isNotebookRunning ─────────────────────────────────────────────────────────
+// Returns true if any cell still has a running indicator.
+const scriptIsRunning = `
+(function() {
+  // Colab shows a spinner or "stop" icon on running cells
+  const runningCells = document.querySelectorAll(
+    '.cell-execution-count[data-execution-count="*"], ' +
+    'colab-run-button[running], ' +
+    '.running-indicator, ' +
+    '[data-status="running"]'
+  );
+  if (runningCells.length > 0) return true;
+  // Fallback: look for the animated progress bar Colab shows during execution
+  const progress = document.querySelector('.progress-bar-animation, .execution-progress');
+  return !!progress;
+})();
+`;
 const scriptRunAll = `
 (function() {
   ${FN_FIND_DEEP}
@@ -190,6 +268,11 @@ new Promise((resolve) => {
       try { await dialog.accept(); } catch (_) {}
     });
 
+    // ── Dismiss any popups on initial load ────────────────────────────────
+    log('Dismissing any startup popups ...');
+    let dismissed = await page.evaluate(scriptDismissPopups);
+    log(`Popup sweep: ${dismissed}`);
+
     // ── Step 1: Open the notebook ─────────────────────────────────────────
     if (NOTEBOOK) {
       log(`Looking for notebook: "${NOTEBOOK}" ...`);
@@ -224,7 +307,11 @@ new Promise((resolve) => {
       log('No CLOUDSURF_NOTEBOOK set — skipping notebook selection');
     }
 
-    // ── Step 2: Run all ───────────────────────────────────────────────────
+    // ── Step 2: Dismiss popups then Run all ───────────────────────────────
+    log('Dismissing any pre-run popups ...');
+    dismissed = await page.evaluate(scriptDismissPopups);
+    log(`Pre-run popup sweep: ${dismissed}`);
+
     log('Attempting "Run all" click ...');
     let runResult = await page.evaluate(scriptRunAll);
     log(`Immediate Run all: ${runResult}`);
@@ -240,7 +327,38 @@ new Promise((resolve) => {
       process.exit(1);
     }
 
-    log('Done.');
+    log('"Run all" clicked — watching for popups while notebook runs ...');
+
+    // ── Step 3: Watch for popups while notebook is running ────────────────
+    // Poll every 15s: dismiss any popups that appear during execution.
+    // We don't try to detect when it's "done" — we just watch for 6 hours
+    // max then exit. The xdotool keepalive in manager.py handles Colab
+    // session heartbeats; our job here is just popup cleanup.
+    const WATCH_INTERVAL_MS  = 15000;   // check every 15s
+    const WATCH_MAX_MS       = 6 * 60 * 60 * 1000; // 6 hour hard cap
+    const watchStart = Date.now();
+    let watchTick = 0;
+
+    while (Date.now() - watchStart < WATCH_MAX_MS) {
+      await new Promise(r => setTimeout(r, WATCH_INTERVAL_MS));
+      watchTick++;
+
+      try {
+        const sweep = await page.evaluate(scriptDismissPopups);
+        if (sweep !== 'none') {
+          log(`[watch tick ${watchTick}] Dismissed popup: ${sweep}`);
+        } else if (watchTick % 20 === 0) {
+          // Log a heartbeat every ~5 min so logs show it's still alive
+          const elapsed = Math.round((Date.now() - watchStart) / 60000);
+          log(`[watch tick ${watchTick}] Still watching — ${elapsed}m elapsed, no popups`);
+        }
+      } catch (err) {
+        // Page may have navigated or reloaded — that's okay
+        log(`[watch tick ${watchTick}] Page eval error (may be navigating): ${err.message}`);
+      }
+    }
+
+    log('Watch period ended (6h cap reached).');
 
   } catch (err) {
     console.error(`[colab_run_all | ${PROFILE_ID}] Fatal: ${err.message}`);
