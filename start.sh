@@ -50,30 +50,35 @@ for i in $(seq 1 20); do
 done
 
 # ── Codespaces keep-alive + manager watchdog ─────────────────────────────────
-# Pings our own API every 4 min — prevents Codespace inactivity shutdown.
+# Pings our own API every 60s AND echoes to stdout — GitHub requires terminal
+# output to detect activity; silent pings do NOT reset the idle timer.
 # Also restarts manager.py automatically if it ever crashes.
 cat > /tmp/cloudsurf_keep.sh << 'KEEPALIVE'
 #!/bin/bash
 SCRIPT_DIR="__SCRIPT_DIR__"
 while true; do
-    curl -sf http://localhost:7860/api/status > /dev/null 2>&1
+    STATUS=$(curl -sf http://localhost:7860/api/status 2>/dev/null || echo '{}')
+    RUNNING=$(echo "$STATUS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('running',0))" 2>/dev/null || echo '?')
+    echo "[cloudsurf $(date '+%H:%M:%S')] alive — profiles running: $RUNNING"
     if [ -f /tmp/cloudsurf.pid ]; then
         PID=$(cat /tmp/cloudsurf.pid)
         if ! kill -0 "$PID" 2>/dev/null; then
-            echo "[keepalive $(date)] Manager died — restarting..." >> "$SCRIPT_DIR/logs/manager.log"
+            echo "[cloudsurf $(date '+%H:%M:%S')] Manager died — restarting..."
             nohup python3 "$SCRIPT_DIR/manager.py" >> "$SCRIPT_DIR/logs/manager.log" 2>&1 &
             echo $! > /tmp/cloudsurf.pid
         fi
     fi
-    sleep 240
+    sleep 60
 done
 KEEPALIVE
 
 sed -i "s|__SCRIPT_DIR__|$SCRIPT_DIR|g" /tmp/cloudsurf_keep.sh
 chmod +x /tmp/cloudsurf_keep.sh
-nohup bash /tmp/cloudsurf_keep.sh >> "$SCRIPT_DIR/logs/keepalive.log" 2>&1 &
+# Run keepalive in FOREGROUND via tee so output hits the terminal (resets idle timer)
+# and also saves to log file
+nohup bash /tmp/cloudsurf_keep.sh 2>&1 | tee -a "$SCRIPT_DIR/logs/keepalive.log" &
 echo $! > /tmp/cloudsurf_keep.pid
-echo -e "  ${GREEN}✓${NC} Codespace keep-alive active (pings every 4 min)"
+echo -e "  ${GREEN}✓${NC} Codespace keep-alive active (prints to terminal every 60s)"
 
 # ── Status ────────────────────────────────────────────────────────────────────
 if kill -0 $MANAGER_PID 2>/dev/null; then
