@@ -93,10 +93,8 @@ main{display:grid;grid-template-columns:320px 1fr;height:100vh;overflow:hidden;}
   border-left:4px solid transparent;
   margin-bottom:1px; 
   color: #fff; 
-  /* Initial state: handled by JS/CSS logic */
 }
 
-/* Hover effects using brightness */
 .p-item:hover{
   filter: brightness(1.15);
   z-index: 1;
@@ -203,9 +201,6 @@ main{display:grid;grid-template-columns:320px 1fr;height:100vh;overflow:hidden;}
 
 .browser-row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
 .browser-btns{display:flex;gap:6px;flex-wrap:wrap;}
-.paste-bar{display:none;gap:6px;align-items:center;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);}
-.paste-bar input{flex:1;min-width:160px;padding:7px 11px;background:var(--bg3);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;}
-.paste-bar input:focus{border-color:rgba(255,255,255,.25);}
 .not-running{display:flex;align-items:center;justify-content:center;min-height:64px;border-radius:9px;background:var(--bg3);border:1px dashed var(--border2);font-family:var(--mono);font-size:11px;color:var(--muted);}
 
 /* KA */
@@ -442,35 +437,26 @@ function runIntroAnim() {
 
     var tl = gsap.timeline();
     
-    // Snappy Waterfall Reveal
-    // Elements start with opacity:0 in CSS
-    
-    // 1. Heading
     tl.fromTo(".intro-heading", 
         {opacity:0, y:-15}, 
         {opacity:1, y:0, duration: 0.4, ease: "power2.out"}
     )
-    // 2. Body Text
     .fromTo(".intro-body", 
         {opacity:0, y:-15}, 
         {opacity:1, y:0, duration: 0.4, ease: "power2.out"}, 
         "-=0.3"
     )
-    // 3. Stats Grid
     .fromTo(".stat-cell", 
         {opacity:0, y:-15}, 
         {opacity:1, y:0, duration: 0.3, stagger: 0.05, ease: "power2.out"}, 
         "-=0.25"
     )
-    // 4. Section Label
     .fromTo(".sec", 
         {opacity:0, y:-10}, 
         {opacity:1, y:0, duration: 0.3, ease: "power2.out"}, 
         "-=0.2"
     );
     
-    // 5. Trigger Profile List items if they exist
-    // They are rendered with style="opacity:0" by renderList during firstRender
     if(profiles.length > 0) {
         tl.to(".p-item", 
             {opacity:1, y:0, duration: 0.3, stagger: 0.04, ease: "power2.out"}, 
@@ -482,7 +468,7 @@ function runIntroAnim() {
     }
 }
 
-// ── Server location (fetched from instance, not browser) ──────────────────
+// ── Server location ───────────────────────────────────────────────────────
 async function fetchServerLocation(){
   try{
     var r=await fetch('/api/status');
@@ -497,8 +483,7 @@ async function fetchServerLocation(){
   }
 }
 
-
-// ── Uptime tick ───────────────────────────────────────────────────────────────
+// ── Uptime tick ───────────────────────────────────────────────────────────
 function tickUptime(){
   var el=document.getElementById('s-uptime');
   var sub=document.getElementById('s-uptime-sub');
@@ -510,18 +495,16 @@ function tickUptime(){
   if(sub) sub.textContent='oldest session';
 }
 
-// ── Data refresh ──────────────────────────────────────────────────────────────
+// ── Data refresh ──────────────────────────────────────────────────────────
 async function refresh(){
   try{
     var r1=await fetch('/api/profiles'),r2=await fetch('/api/sessions');
     profiles=await r1.json(); sessions=await r2.json();
     renderList(); updateStats();
 
-    // Recalculate oldest running session start
     var starts=Object.values(sessions).map(function(s){return s.started_at?new Date(s.started_at).getTime():null;}).filter(Boolean);
     oldestStart=starts.length?Math.min.apply(null,starts):null;
 
-    // Detect new last_action by full value comparison
     for(var pid in sessions){
       var la=sessions[pid].last_action;
       if(!la) continue;
@@ -539,7 +522,6 @@ function updateStats(){
   var kaOn=Object.values(sessions).filter(function(s){return s.ka_active;}).length;
   var count = profiles.length;
 
-  // Animate Numbers if changed
   if(statsCache.active !== active) {
       gsap.to("#s-active", {innerText: active, snap: {innerText:1}, duration: 1, ease: "power2.out"});
       statsCache.active = active;
@@ -554,7 +536,6 @@ function updateStats(){
   }
 }
 
-// Modified renderList for Custom Hex Gradient + GSAP Entrance
 function renderList(){
   var el=document.getElementById('profile-list');
   if(!profiles.length){
@@ -568,26 +549,18 @@ function renderList(){
   }
   
   var total = profiles.length;
-  // Start Color: #0e674b -> RGB(14, 103, 75)
-  // End Color:   #041a13 -> RGB(4, 26, 19)
   var sR = 14, sG = 103, sB = 75;
   var eR = 4,  eG = 26,  eB = 19;
   
   el.innerHTML=profiles.map(function(p, index){
     var on=!!sessions[p.id], sel=selected===p.id;
     
-    // Interpolate RGB
     var pct = (total > 1) ? index / (total - 1) : 0;
     var r = Math.round(sR + pct * (eR - sR));
     var g = Math.round(sG + pct * (eG - sG));
     var b = Math.round(sB + pct * (eB - sB));
     
     var bgStyle = 'background-color: rgb('+r+','+g+','+b+')';
-    
-    // Logic to prevent disappearing profiles:
-    // Only apply initial hidden state (opacity:0) if it is TRULY the first render.
-    // Immediately after generating this string, we will flip firstRender to false.
-    // Subsequent calls (refresh interval) will generate HTML with no inline opacity/transform style.
     var animStyle = firstRender ? 'opacity:0; transform:translateY(-10px);' : '';
 
     return '<div class="p-item'+(on?' live':'')+(sel?' sel':'')+'" onclick="selectProfile(\''+p.id+'\')" style="'+bgStyle+';'+animStyle+'">'
@@ -599,15 +572,7 @@ function renderList(){
       +'</div>';
   }).join('');
 
-  // If we just rendered items hidden for the animation, mark firstRender as done immediately.
-  // The runIntroAnim function will pick up these specific .p-item elements and animate them to opacity:1.
-  // The next refresh() (3 seconds later) will see firstRender=false and render them plainly visible.
   if(firstRender && profiles.length > 0) {
-      // Delay flipping just slightly if needed, but usually safe to flip now 
-      // because runIntroAnim creates the timeline targeting these specific DOM nodes.
-      // However, to be safe against a very fast refresh race condition, we flip it.
-      // Note: runIntroAnim is called AFTER refresh() in init(), so it will find these nodes.
-      // We flip the flag here.
       setTimeout(function(){ firstRender = false; }, 100); 
   }
 }
@@ -632,7 +597,6 @@ function renderDetail(id){
   if(!p) return;
   var sess=sessions[id],on=!!sess,ka=on&&sess.ka_active,intv=kaState[id]||10;
   
-  // Detect if we switched profile to trigger animation
   var isNewSelection = (lastSelected !== id);
   lastSelected = id;
 
@@ -664,13 +628,8 @@ function renderDetail(id){
     h+='<div class="browser-row"><div class="browser-btns">'
       +'<a href="'+buildVncUrl(sess.novnc_port)+'" target="_blank" class="btn btn-w btn-sm">↗ Open Browser</a>'
       +'<button class="btn btn-gh btn-sm" onclick="doRestartChrome(\''+id+'\')">↺ Restart Chrome</button>'
-      +'<button class="btn btn-gh btn-sm" onclick="togglePaste(\''+id+'\')">⊕ Paste Text</button>'
-      +'</div></div>'
-      +'<div id="pb-'+id+'" class="paste-bar">'
-      +'<input id="pi-'+id+'" type="text" placeholder="Paste → injected as keystrokes…"/>'
-      +'<button class="btn btn-w btn-sm" onclick="doSendText(\''+id+'\')">▸ Send</button>'
-      +'<button class="btn btn-gh btn-sm" onclick="togglePaste(\''+id+'\')">✕</button>'
-      +'</div>';
+      +'<button class="btn btn-gh btn-sm" id="paste-btn-'+id+'" onclick="doPasteFromClipboard(\''+id+'\')">⊕ Paste Text</button>'
+      +'</div></div>';
   } else {
     h+='<div class="not-running">Launch profile to access browser</div>';
   }
@@ -689,7 +648,6 @@ function renderDetail(id){
       +'<span class="ka-lbl">sec</span>'
       +'<button class="btn '+(ka?'btn-r':'btn-y')+' btn-sm" onclick="doToggleKA(\''+id+'\')">'+(ka?'■ Stop':'▸ Start')+'</button>'
       +'</div>'
-      
       +'<div id="kl-'+id+'" class="ka-log">'+(kaLog[id]||'<span style="color:var(--muted2)">Waiting for activity…</span>')+'</div>'
       +'</div></div>';
   }
@@ -698,7 +656,6 @@ function renderDetail(id){
   var rp = document.getElementById('right-panel');
   rp.innerHTML=h;
   
-  // Only animate if the selection actually changed to avoid breathing/flashing on every refresh tick
   if(isNewSelection) {
       gsap.fromTo(".detail > *", 
         {opacity: 0, y: 15}, 
@@ -707,7 +664,7 @@ function renderDetail(id){
   }
 }
 
-// ── Actions ───────────────────────────────────────────────────────────────────
+// ── Actions ───────────────────────────────────────────────────────────────
 
 async function createProfile(){
   var name=document.getElementById('inp-name').value.trim();
@@ -768,9 +725,7 @@ async function doToggleKA(id){
 }
 
 async function doClick(id){
-  // Animating the button click
   gsap.fromTo(event.target, {scale: 0.95}, {scale: 1, duration: 0.3, ease: "elastic.out(1, 0.5)"});
-  
   var res=await fetch('/api/profiles/'+id+'/click',{method:'POST'});
   var d=await res.json();
   if(d.error){toast(d.error,'err');return;}
@@ -787,31 +742,34 @@ async function doRestartChrome(id){
   else{toast('Chrome restarted','ok');if(b){b.innerHTML='<div class="cdot"></div>Chrome running';}}
 }
 
-function togglePaste(id){
-  var bar=document.getElementById('pb-'+id);if(!bar)return;
-  var open=bar.style.display==='flex';
-  bar.style.display=open?'none':'flex';
-  
-  // Animation for paste bar
-  if(!open) { gsap.from(bar, {height: 0, opacity: 0, duration: 0.3}); }
-  
-  var fab=document.getElementById('fab');
-  if(fab) fab.style.display=open?'':'none';
-  if(!open){
-    if(navigator.clipboard) navigator.clipboard.readText().then(function(t){var inp=document.getElementById('pi-'+id);if(inp&&t)inp.value=t;}).catch(function(){});
-    setTimeout(function(){var el=document.getElementById('pi-'+id);if(el)el.focus();},50);
+// ── Paste from clipboard directly — no input field, no keyboard ──────────
+async function doPasteFromClipboard(id){
+  var btn = document.getElementById('paste-btn-'+id);
+  if(!navigator.clipboard || !navigator.clipboard.readText){
+    toast('Clipboard not available — use a secure context (HTTPS)','err');
+    return;
+  }
+  try{
+    var text = await navigator.clipboard.readText();
+    if(!text){toast('Clipboard is empty','info');return;}
+    if(btn){
+      btn.textContent='Sending…';
+      btn.disabled=true;
+    }
+    var res=await fetch('/api/profiles/'+id+'/sendtext',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})});
+    var d=await res.json();
+    if(d.error){toast(d.error,'err');}
+    else{toast('Sent '+text.length+' chars','ok');}
+  }catch(e){
+    // User denied clipboard permission
+    toast('Clipboard access denied — allow clipboard in browser settings','err');
+  }finally{
+    if(btn){
+      btn.textContent='⊕ Paste Text';
+      btn.disabled=false;
+    }
   }
 }
-
-async function doSendText(id){
-  var inp=document.getElementById('pi-'+id),text=inp?inp.value:'';
-  if(!text)return;
-  var res=await fetch('/api/profiles/'+id+'/sendtext',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})});
-  var d=await res.json();
-  if(d.error){toast(d.error,'err');}
-  else{toast('Sent '+text.length+' chars','ok');if(inp)inp.value='';var bar=document.getElementById('pb-'+id);if(bar)bar.style.display='none';var fab=document.getElementById('fab');if(fab)fab.style.display='';}
-}
-
 
 function appendLog(id,d){
   if(!d||d.x==null) return;
@@ -842,32 +800,24 @@ function toast(msg,type){
   el.className='toast '+(type==='ok'?'ok':type==='err'?'err':'info');
   el.textContent=msg;
   document.getElementById('toasts').appendChild(el);
-  
-  // GSAP Entrance
   gsap.from(el, {y: 20, opacity: 0, duration: 0.3, ease: "back.out(1.5)"});
-  
   setTimeout(function(){
       gsap.to(el, {opacity: 0, y: 10, duration: 0.2, onComplete: function(){el.remove();}});
   },3000);
 }
 
-
 function toggleModal(){
   var o=document.getElementById('modal-overlay');
   var f=document.getElementById('fab');
   var open=o.classList.contains('show');
-  
   if(open){
-      // GSAP Exit
       gsap.to(".modal-sheet", {y: 50, opacity: 0, duration: 0.2, onComplete: function(){
           closeModal();
-          // Reset for next open
           gsap.set(".modal-sheet", {y: 0, opacity: 1}); 
       }});
   }else{
     o.classList.add('show');
     f.classList.add('open');
-    // GSAP Entrance
     gsap.fromTo(".modal-sheet", {y: 100, opacity: 0}, {y: 0, opacity: 1, duration: 0.4, ease: "power3.out"});
     setTimeout(function(){document.getElementById('inp-name').focus();},200);
   }
@@ -877,9 +827,8 @@ function closeModal(){
   document.getElementById('fab').classList.remove('open');
 }
 function overlayClick(e){
-  if(e.target===document.getElementById('modal-overlay')) toggleModal(); // trigger exit anim
+  if(e.target===document.getElementById('modal-overlay')) toggleModal();
 }
-
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 function toggleTheme(){
@@ -888,7 +837,6 @@ function toggleTheme(){
   document.documentElement.setAttribute('data-theme',next==='light'?'light':'');
   localStorage.setItem('cs-theme',next);
   document.getElementById('tbtn-theme').textContent=next==='light'?'●':'◑';
-  // update theme-color meta
   var meta=document.querySelector('meta[name="theme-color"]');
   if(meta) meta.content=next==='light'?'#f5f5f7':'#0a0a0a';
 }
